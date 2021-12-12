@@ -1,0 +1,111 @@
+---
+title: "Hw6 High dim/Gen"
+author: "Wei-Yu Tseng"
+date: "11/21/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+# Q0: Paper for final project
+I will choose data analysis as my final project. The dataset would prorbably be ***Golub***, though I haven't finalized my decision yet. I think classification is a more straightforward method to apply on this data.  
+
+
+# Q1: K-means clustering
+```{r}
+library(PMA)
+tmp <- read.csv("https://raw.githubusercontent.com/xuranw/469_public/master/hw6/darmanis_preprocessed.csv",row.names = 1)
+expr_mat <- as.matrix(tmp[,-1])
+cell_types <- as.factor(tmp[,1])
+source("https://raw.githubusercontent.com/xuranw/469_public/master/hw6/hw6_functions.R")
+dim(expr_mat); length(cell_types)
+table(cell_types)
+expr_mat[1:5,1:5]
+```
+
+\newpage
+
+## Question 1.A
+```{r}
+stp1 <- 10**4*scale(t(expr_mat), center = FALSE, scale = rowSums(expr_mat))
+stp2 <- (t(stp1) + 1 )%>% log2()
+stp3 <- scale(stp2)
+stp3[1:5,1:5]
+```
+
+## Question 1.B
+```{r}
+pca_res = stats::prcomp(stp3, center = T, scale. = T)
+par(mfrow = c(1,2))
+plot(pca_res$sdev, pch = 16, xlab = 'Index of principal component', ylab = 'Square root of eigenvalues', main = 'Scree plot of full data') 
+expr_pca = pca_res$x[,1:4]
+expr_pca = scale(expr_pca)
+plot(expr_pca[,1], expr_pca[,2], asp = T, pch = 16, col = as.numeric(as.factor(cell_types)),xlab = 'First principal component', ylab = 'Second principal component', main = 'Visualizaing data \n (True clusters, full data)' )
+legend("bottomleft", legend = cell_types %>% unique() %>% sort,pch = rep(15,4), col = cell_types %>% unique() %>% sort %>% as.numeric, bty = 'n')
+```
+First 4 PC's would be enough since starting at 5th PC, the % of variance accounted for are all similarly small compared to first 4 PC's. It also appears to be the elbow point of this scree plot. 
+
+The cluster of actroccytes cells seem to distinguish itself from the other types of cells, whereas the clusters of fetal quiescent, neurons, and oligodendrocytes are highly overlapped.  
+
+## Question 1.C
+```{r}
+set.seed(10)
+kmean_res <- stats::kmeans(stp3, centers = 4)
+table(kmean_res$cluster, cell_types) 
+compute_misclustering_rate(kmean_res$cluster,cell_types)
+
+```
+
+The clustering result does not seem well, although most cells are clustering together with the cells that share the same cell type, the model is unable to distinguish astrocytes and oligodendrocytes, with most of them being clustered to the same group (group 3 here). Although the result of neurons misclassified in all groups, given its number of observations, the misclassification rate of this cell is still decent, with a value of $\frac{(5+3+1)}{(122+5+3+1)}=0.06870229$, which is even smaller than the overall misclustering rate 0.143695.
+
+## Question 1.D
+```{r}
+set.seed(10)
+kmean_res <- stats::kmeans(expr_pca, centers = 4)
+table(kmean_res$cluster, cell_types) 
+compute_misclustering_rate(cell_types,kmean_res$cluster)
+plot(expr_pca[,1], expr_pca[,2], asp = T, pch = 16, col = kmean_res$cluster,xlab = 'First principal component', ylab = 'Second principal component', main = 'Visualizaing data \n (Est. clusters, full data)' )
+
+```
+
+Instead of the improvement, the result of clustering on first 4 PC's deteriorates, with a misclustering rate 0.2991202 compared to 0.143695 of the full data.  In the graph, for fetal quisescent and neurons types, it is now even harder to draw a boundary between them, since both have more than 20% of the data (fetal quisescent: 23.5%, neurons: 29%) clustered to the same group (group 1, black cluster). In addition, similar to the clustering model on the full dataset, the new model based on first 4 PC's is still unable to differentiate astrocytes and oligodendrocytes (green cluster). 
+
+
+## Question 1.E
+```{r, cache = TRUE}
+set.seed(10)
+class(stp3)
+spca_cv_res <- PMA::SPC.cv(stp3, sumabsvs = seq(1.2, sqrt(ncol(stp3))/2, length.out = 10))
+spca_res <- PMA::SPC(stp3, sumabsv = spca_cv_res$bestsumabsv1se, K = length(unique(cell_types)))
+spca_res
+gene_idx <- unique(sort(unlist(lapply(1:ncol(spca_res$v), function(i){
+  which(spca_res$v[,i]!=0)
+}))))
+length(gene_idx)
+expr_mat_screened = stp3[,gene_idx]
+dim(expr_mat_screened)
+expr_mat_screened <- scale(expr_mat_screened, center = T, scale = T)
+head(expr_mat_screened)
+```
+
+## Question 1.F
+```{r}
+pca_res = stats::prcomp(expr_mat_screened, center = T, scale. = T)
+par(mfrow = c(1,2))
+expr_spca = pca_res$x[,1:4]
+expr_spca = scale(expr_spca)
+plot(expr_spca[,1], expr_spca[,2], asp = T, pch = 16, col = as.numeric(as.factor(cell_types)),xlab = 'First principal component', ylab = 'Second principal component', main = 'Visualizaing data \n (True clusters, screened data)' )
+legend("bottomleft", legend = cell_types %>% unique() %>% sort,pch = rep(15,4), col = cell_types %>% unique() %>% sort %>% as.numeric, bty = 'n')
+
+set.seed(10)
+kmean_res <- stats::kmeans(expr_spca, centers = 4)
+table(kmean_res$cluster, cell_types) 
+compute_misclustering_rate(cell_types,kmean_res$cluster)
+plot(expr_spca[,1], expr_spca[,2], asp = T, pch = 16, col = kmean_res$cluster,xlab = 'First principal component', ylab = 'Second principal component', main = 'Visualizaing data \n (Est. clusters, screened data)' )
+
+```
+
+Since most of the genes in the dataset are not informative (according to the scree plot), PCA does not work well. Compared to PCA, spare PCA applied penalties on non-zero loading (eigenvalues), which helps us filter out the most important and related information from the dataset. The PC's of the ordinary PCA are usually linear combinations of input variables, including those features which are not informative, while sparse PCA finds linear combinations of that few informative variables. Thus, different from the summary result of 1.B, 1.C and 1.D, which applied PCA on the data, the model after deploying sparse PCA were dramatically better.  

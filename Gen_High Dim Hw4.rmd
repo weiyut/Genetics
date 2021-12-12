@@ -1,0 +1,264 @@
+---
+title: "Gen/High Dim Hw4"
+author: "Wei-Yu Tseng"
+date: "October 22, 2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+library(glmnet)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Q1: Comparing logistic regression with XGBoost
+
+Load Data
+```{r cars}
+snp_data <- as.matrix(
+  read.csv("https://raw.githubusercontent.com/xuranw/469_public/master/hw4/synthetic_famuss.csv"))
+heart_disease <- snp_data[,1]
+snp_data <- snp_data[,-1]
+
+set.seed(10)
+n <- length(heart_disease)
+idx <- sample(1:n, round(.2*n))
+train_dat <- snp_data[-idx,] 
+train_label <- heart_disease[-idx]
+test_dat <- snp_data[idx,]
+test_label <- heart_disease[idx]
+```
+
+## Question 1.A
+```{r, fig.width= 10, fig.height= 5}
+pca_res = stats::prcomp(snp_data, center=T, scale.=T)
+par(mfrow = c(1,2))
+
+plot(pca_res$x[-idx, 1:2], pch = 16, col = heart_disease[-idx]+1, 
+     main = "Training data: Observed", xlab = 'Principal component 1', 
+     ylab = 'Principal component 2', ylim = c(-6,6))
+plot(pca_res$x[idx, 1:2], pch = 16, col = heart_disease[idx]+1, 
+     main = "Testing data: Observed", xlab = 'Principal component 1', 
+     ylab = 'Principal component 2', ylim = c(-6,6))
+
+```
+  
+The pca is based on SNPs instead of ancestry, and the relationship between SNPs and heart disease is relatively weak (the pca we did in last homework), hence there is only a weak grouping separating the data with heart disease and without.  
+
+## Question 1.B
+```{r, fig.width= 10, fig.height= 5}
+set.seed(10)
+par(mfrow = c(1,2))
+logreg = cv.glmnet(x = train_dat, y = train_label, family = 'binomial', 
+                   alpha = 1, nfolds = 10, intercept = TRUE)
+train_result = predict(logreg, newx = train_dat, s = logreg$lambda.1se, type = 'response')
+t = table(train_result>0.5, heart_disease[-idx])
+
+
+plot(pca_res$x[-idx, 1:2], pch = 16, col = (train_result >0.5) + 1, 
+     main = paste("Training data: Logistic reg.\n Training Error: ",round(1-sum(diag(t))/sum(t),2)), 
+     xlab = 'Principal component 1', ylab = 'Principal component 2')
+
+test_result = predict(logreg, newx = test_dat, s = logreg$lambda.1se, type = 'response')
+t = table(test_result>0.5, heart_disease[idx])
+
+
+plot(pca_res$x[idx, 1:2], pch = 16, col = (test_result >0.5) + 1, 
+     main = paste("Testing data: Logistic reg.\n Testing Error: ",round(1-sum(diag(t))/sum(t),2)), 
+     xlab = 'Principal component 1', ylab = 'Principal component 2', ylim = c(-6,6))
+legend('topright',c('Predicted 0', 'Predicted 1'), pch = c(15,15), col = c(1,2), bty='n')
+```
+  
+The logistic regression seems to classify the data base on a straight line.  
+However, since there is not clear straight line boundary in actaul data, the classification accuracy is horrible, with 0.4 and 0.38 misclassification rate for training and testing data, respectively.  
+
+## Question 1.C
+```{r, fig.width= 10, fig.height= 5}
+set.seed(10)
+par(mfrow = c(1,2))
+tree = xgboost::xgb.cv(data = train_dat, label = train_label, max.depth = 5,
+                       nround = 20, objective = "binary:logistic", nfold = 5, 
+                       metrics=list("error"), early_stopping_rounds=5, verbose = F)$best_iteration
+
+xgb_fit = xgboost::xgboost(data = train_dat, label = train_label, max.depth = 5,
+                           nround = tree, objective = "binary:logistic", verbose = F,
+                           eval_metric='logloss')
+
+train_pred <- as.numeric(stats::predict(xgb_fit, newdata = train_dat) > 0.5)
+t = table(train_pred, heart_disease[-idx])
+
+plot(pca_res$x[-idx, 1:2], pch = 16, col = train_pred + 1, 
+     main = paste("Training data: XGBoost \n Training Error: ",round(1-sum(diag(t))/sum(t),2)), 
+     xlab = 'Principal component 1', ylab = 'Principal component 2', ylim = c(-6,6))
+
+
+
+test_pred <- as.numeric(stats::predict(xgb_fit, newdata = test_dat) > 0.5)
+t = table(test_pred, heart_disease[idx])
+
+plot(pca_res$x[idx, 1:2], pch = 16, col = test_pred + 1, 
+     main = paste("Testing data: XGBoost \n Testing Error: ",round(1-sum(diag(t))/sum(t),2)), 
+     xlab = 'Principal component 1', ylab = 'Principal component 2', ylim = c(-6,6))
+legend('topright',c('Predicted 0', 'Predicted 1'), pch = c(15,15), col = c(1,2), bty = 'n')
+```
+
+Unlike logistic regression classifier, XGBoost doesn't use a regression line to classify the data.  
+Instead, it combines several weak learners to help classifying the data.    
+Therefore, unlike the result of logistic regression, the result XGBoost classification doesn't seem to reside on two clear sides.   
+Hence both accuracy of training and testing data are higher than logistic regression classifier.
+
+
+## Question 1.D
+```{r, fig.width= 10, fig.height= 5}
+
+iteration = NULL
+train_acc = NULL
+test_acc = NULL
+for (i in 1:10) {
+  set.seed(10)
+  iteration[i] = xgboost::xgb.cv(data = train_dat, label = train_label, max.depth = i,
+                                 nround = 20, objective = "binary:logistic", nfold = 5, 
+                                 metrics=list("error"), early_stopping_rounds=5, 
+                                 verbose = F)$best_iteration
+  xgb_fit = xgboost::xgboost(data = train_dat, label = train_label, max.depth = i,
+                             nround = iteration[i], objective = "binary:logistic", 
+                             verbose = F, eval_metric='logloss')
+  train_pred <- as.numeric(stats::predict(xgb_fit, newdata = train_dat) > 0.5)
+  test_pred <- as.numeric(stats::predict(xgb_fit, newdata = test_dat) > 0.5)
+  train_t = table(train_pred, heart_disease[-idx])
+  test_t = table(test_pred, heart_disease[idx])
+  train_acc[i] = 1-sum(diag(train_t))/sum(train_t)
+  test_acc[i] = 1-sum(diag(test_t))/sum(test_t)
+}
+
+plot(train_acc, type = 'l', ylim = c(0, 0.25), xlab = 'Max depth', 
+     ylab = 'Misclassification', main = 'Traing vs. testing comparison')
+lines(test_acc, lty = 2, col = 2)
+legend('bottomleft',c('Training misclassification', 'Testing misclassification'), 
+       pch = c(15,15), col = c(1,2), bty='n')
+
+```
+  
+In our graph, max depth = 6 seems to yield the lowest misclassification rate for training data, however, the miscalssification doesn't appear to the lowest with this argument, which is probably the result of overfitting.  
+
+## Question 1.E
+```{r}
+set.seed(10)
+xgboost::xgb.cv(data = train_dat, label = train_label, max.depth = 3,
+                nround = 20, objective = "binary:logistic", nfold = 5, 
+                metrics=list("error"), early_stopping_rounds=5, verbose = F)
+
+xgb_fit = xgboost::xgboost(data = train_dat, label = train_label, max.depth = 3,
+                           nround = 6, objective = "binary:logistic", verbose = F,
+                           eval_metric='logloss')
+
+
+importance_mat <- xgboost::xgb.importance(model = xgb_fit)
+head(importance_mat)
+xgboost::xgb.plot.importance(importance_mat, xlab = 'Importance measure')
+
+
+```
+
+
+The Gain speaks the relative contribution of the each feature to the model calculated by taking each feature's contribution for each tree in the model.  
+The Cover metric means the number of observations related to this feature.  
+The Frequency is the percentage representing the relative number of times a particular feature occurs in the trees of the model.  
+
+\newpage
+# Q2: Understanding the decision boundaries
+
+Load Data
+```{r}
+source("https://raw.githubusercontent.com/xuranw/469_public/master/hw4/hw4_functions.R")
+dat <- as.matrix(
+  read.csv("https://raw.githubusercontent.com/xuranw/469_public/master/hw4/synthetic_data.csv"))
+y <- dat[,1]
+x <- dat[,2:3]
+
+grid_val <- seq(-5, 5, length.out = 100)
+test_grid <- as.matrix(expand.grid(grid_val, grid_val))
+colnames(test_grid) <- c("x1", "x2")
+colnames(x) <-c("x1", "x2")
+example_classifier <- function(vec){
+  ifelse(vec[2] >= 2, 0, 1)
+}
+pred_vec <- apply(test_grid, 1, example_classifier)
+plot_prediction_region(x, y, pred_vec, test_grid,
+                       xlab = "Dimension 1", ylab = "Dimension 2",
+                       main = "Example decision boundary",
+                       pch = 16, asp = T)
+```
+
+## Question 2.A
+```{r}
+set.seed(10)
+logreg = glmnet::glmnet(x, y, family='binomial', alpha = 0, lambda = 0, intercept = T)
+
+pred_vec = predict(logreg, newx = test_grid, type = 'response')>0.5
+
+plot_prediction_region(x, y, pred_vec, test_grid, 
+                       xlab = "Dimension 1", ylab = "Dimension 2",
+                       main = "Logistic reg. decision boundary",
+                       pch = 16, asp = T)
+```
+  
+The true decision boundary has several curvatures, however, the logistic regression uses a straight line as desicion boundary, which does not separate the clusters well.
+
+## Question 2.B
+```{r}
+xgb_fit = xgboost::xgboost(data = x, label = y, max.depth = 1,
+                          nround = 1, objective = "binary:logistic", 
+                          verbose = F, eval_metric='logloss')
+
+pred_vec = predict(xgb_fit, newdata = test_grid)>0.5
+
+
+plot_prediction_region(x, y, pred_vec, test_grid, 
+                       xlab = "Dimension 1", ylab = "Dimension 2",
+                       main = "XGBoost decision boundary\n 1 Tree, depth 1",
+                       pch = 16, asp = T)
+
+```
+
+Becasue the max depth of the tree is only 1, and we only have 1 tree (weak learner) doing one split, it is unlikely to resmeble the curvatures in true boundary, the accuracy of the classifier is of course not going to be great.  
+In addition, although it only does one split, since desicion tree is a non-linear method, the model is still non-linear, hence we don't get the simialr result as logistic regression classifier.   
+
+## Question 2.C
+```{r}
+xgb_fit = xgboost::xgboost(data = x, label = y, max.depth = 3,
+                           nround = 50, objective = "binary:logistic",
+                           verbose = F, eval_metric='logloss')
+
+
+pred_vec = predict(xgb_fit, newdata = test_grid)>0.5
+
+
+plot_prediction_region(x, y, pred_vec, test_grid, 
+                       xlab = "Dimension 1", ylab = "Dimension 2",
+                       main = "XGBoost decision boundary\n 50 trees, depth 3",
+                       pch = 16, asp = T)
+```
+The decision boundary seems to be more complex than that of the logistic regression classifier in 2.A and the 1 tree-1 depth xgboosting model in 2.B since it gets more depths and more trees.   
+However, for boosting methods, since at each step when we add an additonal weak learner(tree), we fit the tree with the points that were poorly predicted before, overfitting is likley going to occur when we add too many trees.  
+Since we have 50 trees in this model, and there exists several tiny regions in the graph(which we don't see in the true boundary), the model is likely overfitting the data.  
+
+
+## Question 2.D
+```{r}
+set.seed(10)
+Tree = xgboost::xgb.cv(data = x, label = y, max.depth = 3,
+                       nround = 20, objective = "binary:logistic", nfold = 5, 
+                       metrics=list("error"), early_stopping_rounds=5, verbose = F)$best_iteration
+
+xgb_fit = xgboost::xgboost(data = x, label = y, max.depth = 3,
+                           nround = 4, objective = "binary:logistic", verbose = F, 
+                           eval_metric='logloss')
+pred_vec = predict(xgb_fit, newdata = test_grid)>0.5
+
+
+plot_prediction_region(x, y, pred_vec, test_grid, 
+                       xlab = "Dimension 1", ylab = "Dimension 2",
+                       main = "XGBoost decision boundary\n Tuned number of trees, depth 3",
+                       pch = 16, asp = T)
+```
+We prefer this model over the 50 trees-3 depths model, because the cross-validation finds the best number of tress that minimize the testing error and prevent overfitting, there is no more separated small region in the graph and it also resemble the curvature boundary of the true model.

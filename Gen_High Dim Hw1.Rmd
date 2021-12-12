@@ -1,0 +1,81 @@
+---
+title: "Genomics/High Dim Hw1"
+author: "Wei-Yu Tseng"
+date: "9/4/2021"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Question 1.B:  
+
+```{r}
+famuss <- read.csv("https://raw.githubusercontent.com/xuranw/469_public/master/data/famuss.csv")
+```
+a.    
+```{r}
+ncol(famuss)
+colnames(famuss)[c(1,81:83)]
+```
+Although *famus* dataset has 83 columns, 4 of them are not SNP. 
+There are 79 different SNPs present in the dataset.  
+b.  
+```{r}
+which(colnames(famuss)=='actn3_1671064')
+```
+The 4th column contains the information about the **actn3_1671064** SNP.  
+  
+c.
+```{r}
+table(famuss[,4])
+```
+There are 3 different minor genotypes, with 169 observations of type **AA**, 262 observations of type **GA**, and 107 observations of **GG** out of a total of 531 observations.  
+d.
+```{r}
+table(famuss[,c(4,83)])
+```
+The table suggests that most of Caucasians have allele "A".  
+  
+Question 1.C
+a.  
+```{r}
+table = table(famuss[,'esr1_rs2077647'])
+names(table) = c(1,0,2)
+barplot(sort(table,decreasing = TRUE),main = 'Genotype counts of SNP esr1_rs2077647', xlab = 'Numeric coding for SNP esr1_rs2077647', ylab = 'Count')
+
+```
+  
+Q 2.A  
+a.
+```{r}
+source("https://raw.githubusercontent.com/xuranw/469_public/master/hw1/clt.R")
+print(generate_data)
+```
+The description of each line of code in this functions is listed below:  
+Line 1.This function won't work if n isn't a positive integer.  
+Line 2.Randomly generate n numbers from 1 to 3.  
+Line 3.Create a list with n empty slots.   
+Line 4.Generate (the number of total counts of 1 in index_vec)  of samples from $N(10,1)$ and store them to the list.  
+Line 5.Generate (the number of total counts of 2 in index_vec)  of samples from $\gamma(2,2)$ and store them to the list.  
+Line 6.Generate (the number of total counts of 2 in index_vec)  of samples from $\chi^2(2,2)$ and store them to the list. 
+Line 7.Return the list.  
+  
+In general, the function will randomly create n samples from $N(10,1)$, $\gamma(2,2)$ and $\chi^2(2,2)$ and store them to a list.  
+Question 2.B  
+```{r}
+set.seed(100)
+CLT = function(n, tries=10000)
+{
+  data = rep(NA, tries)
+for (i in 1: tries){
+  data[i]=mean(generate_data(n))
+}
+  hist(data, breaks = 100, main = paste('Sample size:',n),xlab = 'Value')
+}
+par(mfrow=c(2,3))
+invisible(lapply(c(1,2,3,5,10,100), CLT))
+```
+
+

@@ -1,0 +1,466 @@
+---
+title: "High Dim/Gen HW2"
+author: "Wei-Yu Tseng"
+date: "9/21/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(glmnet)
+library(tidyverse)
+library(robustbase)
+library(ggplot2)
+library(ggfortify)
+library(cowplot)
+```
+
+## 1-A  
+Load Data  
+```{r}
+famuss <- 
+  read.csv("https://raw.githubusercontent.com/xuranw/469_public/master/hw2/synthetic_famuss.csv")
+```
+Odds Ratio  
+```{r}
+SNP_actn3rs540874_risk_factor <- famuss$actn3_rs540874 > 1
+table(SNP_actn3rs540874_risk_factor,famuss$heart_disease)
+(53/45)/((212/221))
+```
+The odds ratio shows that people has SNP actn3rs540874(A) are 22% more likely to have heart disease than those (i.e. people with actn3rs540874(a)) who do not have the risk factor. 
+
+## 1-B
+```{r}
+logreg <- glm(heart_disease ~ . -norm_BMI, data = famuss, family = binomial)
+
+
+logreg$coefficients %>%
+  exp() %>%
+  plot(xlab = "SNP order (alphabetical)", 
+       ylab = 'Estimated OR',
+       main = 'Logistic regression (without BMI) \n Misclassification: 0.33', 
+       pch = 20
+       )
+abline(h = c(0.8,1,1.2), lty = rep(2,3), col = rep('red',3))
+```
+
+## 1-C
+```{r}
+logreg2 = glm(heart_disease ~ . , data = famuss, family = binomial)
+t <- table(logreg2$fitted.values >= 0.5, famuss$heart_disease)
+t
+missclass <- 1-sum(diag(t))/sum(t) 
+print(paste('Missclassification: ',missclass %>% round(3)))
+logreg2$coefficients[-(1:2)] %>% 
+  exp() %>% 
+  plot(xlab = "SNP order (alphabetical)", 
+       ylab = 'Estimated OR',
+       main = paste('Logistic regression (with BMI) \n Misclassification: ', 
+                    round(missclass, 3)
+                    ),
+       pch =20
+       )
+abline(h = c(0.8,1,1.2), lty = rep(2,3), col = rep('red',3))
+logreg2$coefficients['norm_BMI']
+```
+Intuitively, normalized BMI is highly related to obesity, and obesity may be the result of high body fat percentage, which could also lead to heart disease. 
+In the second model, we add normalized BMI as one of the predictor, which also helps reduce the miss-classification rate. 
+As shown in plots, many of the odd ratios of certain SNPs increased after the predictor normalized BMI being added.  
+
+## 1-D
+```{r}
+set.seed(10)
+lasso_cv <- cv.glmnet(as.matrix(famuss[,-1]),
+                      famuss$heart_disease,
+                      family = binomial, 
+                      alpha = 1
+                      )
+plot(lasso_cv)
+```
+```{r}
+lasso <- glmnet(as.matrix(famuss[,-1]),
+                famuss$heart_disease,
+                family = binomial,
+                alpha = 1,
+                lambda = lasso_cv$lambda.1se
+                )
+t_lasso <-table(predict(lasso, newx = as.matrix(famuss[,-1])) >0.5, famuss$heart_disease)
+missclass_lasso <- 1-sum(diag(t_lasso))/sum(t_lasso) 
+lasso$beta[-(1:2)] %>% 
+  exp() %>% 
+  plot(xlab = "SNP order (alphabetical)", 
+       ylab = 'Estimated OR',
+       main = paste('Penalized logistic regression (with BMI) \n Misclassification: ',
+                    round(missclass_lasso, 3)),
+       pch =20,
+       ylim = c(0.8,1.2)
+       )
+abline(h = c(0.8,1,1.2), lty = rep(2,3), col = rep('red',3))
+
+lasso$beta %>% head(1)
+```
+Most of SNPs has odds ratio = 1 in this model due to the penalty term, which makes us even easier to distinguish which SNP may have larger relationship to heart disease.  
+In fact, only 3 SNPs are able to stand out in this model, which may be interesting to study them.   
+In addition, despite adding penalty term, the estimated coefficient of norm_BMI is still large, implying the strong relationship between obesity and heart disease. 
+
+The miss-classification rate is also slightly higher than model in 1-C, which indicates the low miss-classification rate in 1-C may be the result of overfitting.
+
+## 2-A
+```{r}
+generate_data <- function(n, p, k = 3, cor_within = 0.5){
+  cor_mat <- matrix(0, p, p)
+  idx_vec <- round(seq(0, p, length.out = k+1))
+  for(i in 1:k){
+    cor_mat[(idx_vec[i]+1):(idx_vec[i+1]), (idx_vec[i]+1):(idx_vec[i+1])] <- cor_within
+  }
+  diag(cor_mat) <- 1
+  
+  x <- MASS::mvrnorm(n = n, mu = rep(0, p), Sigma = cor_mat)
+  coef_truth <- rep(0,p)
+  coef_truth[idx_vec[-1]] <- 5
+  y <- as.numeric(x %*% coef_truth + stats::rnorm(n))
+  
+  list(x = x, y = y, coef_truth = coef_truth)
+}
+```
+The generate_data function randomly generates a n row p columns data $x$ with correlations between columns equal cor_within.  
+In addition, it assigns a list of p coefficients and make the element of every 100/k percentile equals to 5, and produce $y$ = $x$*this coefficient matrix + random noise.   
+
+## 2-B
+```{r}
+clockwise90 <- function(a) { t(a[nrow(a):1,]) }
+plot_covariance <- function(dat, ...){
+  graphics::image(clockwise90(stats::cor(dat)), asp = T, ...)
+}
+par(mfrow = c(1,3))
+plot_covariance(generate_data(n = 1000, p= 100,cor_within = 0)$x, main = "Correlation: 0")
+plot_covariance(generate_data(n = 1000, p= 100,cor_within = 0.5)$x, main = "Correlation: 0.5")
+plot_covariance(generate_data(n = 1000, p= 100,cor_within = 0.95)$x, main = "Correlation: 0.95")
+```
+As cor_within increases, the color on diagnol blocks of 3 x 3 blocks becomes deeper.   
+
+## 2-C
+```{r}
+generate_data <- function(n, p, k = 3, cor_within = 0.5){
+  cor_mat <- matrix(0, p, p)
+  idx_vec <- round(seq(0, p, length.out = k+1))
+  for(i in 1:k){
+    cor_mat[(idx_vec[i]+1):(idx_vec[i+1]), (idx_vec[i]+1):(idx_vec[i+1])] <- cor_within
+  }
+  diag(cor_mat) <- 1
+  
+  x <- MASS::mvrnorm(n = n, mu = rep(0, p), Sigma = cor_mat)
+  coef_truth <- rep(0,p)
+  coef_truth[idx_vec[-1]] <- 5
+  y <- as.numeric(x %*% coef_truth + stats::rnorm(n))
+  
+  list(x = x, y = y, coef_truth = coef_truth)
+}
+
+simulate_lasso <- function(n,cor_within){
+  dat = generate_data(n = n, p = 2*n, cor_within = cor_within)
+  cvglmnet_res = cv.glmnet(x = dat$x, 
+                           y = dat$y, 
+                           family = "gaussian", 
+                           alpha = 1, 
+                           intercept = F)
+  l2_error = (coef(cvglmnet_res, 
+                   newx = dat$x, 
+                   s = cvglmnet_res$lambda.1se)[-1] - dat$coef_truth)^2 %>% 
+    sum() %>% sqrt()
+  pred_error = (predict(cvglmnet_res, 
+                        newx = dat$x,
+                        s = cvglmnet_res$lambda.1se
+                        ) - dat$x %*% dat$coef_truth)^2 %>% mean()
+  return(cbind(l2_error,pred_error))
+}
+```
+
+## 2-D  
+
+```{r, cache= T, echo= FALSE}
+sim_n_0 = matrix(NA,8,2)
+sim30_0 = matrix(NA,100,2)
+for (i in 1:100) {
+    
+    sim30_0[i,] = simulate_lasso(30,0)
+} 
+sim_n_0[1,] = colMedians(sim30_0)
+
+sim40_0 = matrix(NA,100,2)
+for (i in 1:100) {
+    
+    sim40_0[i,] = simulate_lasso(40,0)
+} 
+sim_n_0[2,] = colMedians(sim40_0)
+
+sim50_0 = matrix(NA,100,2)
+for (i in 1:100) {
+    
+    sim50_0[i,] = simulate_lasso(50,0)
+} 
+sim_n_0[3,] = colMedians(sim50_0)
+
+sim60_0 = matrix(NA,100,2)
+for (i in 1:100) {
+    
+    sim60_0[i,] = simulate_lasso(60,0)
+} 
+sim_n_0[4,] = colMedians(sim60_0)
+
+sim70_0 = matrix(NA,100,2)
+for (i in 1:100) {
+    
+    sim70_0[i,] = simulate_lasso(70,0)
+} 
+sim_n_0[5,] = colMedians(sim70_0)
+
+sim80_0 = matrix(NA,100,2)
+for (i in 1:100) {
+    
+    sim80_0[i,] = simulate_lasso(80,0)
+} 
+sim_n_0[6,] = colMedians(sim80_0)
+
+sim90_0 = matrix(NA,100,2)
+for (i in 1:100) {
+    
+    sim90_0[i,] = simulate_lasso(90,0)
+} 
+sim_n_0[7,] = colMedians(sim90_0)
+
+sim100_0 = matrix(NA,100,2)
+for (i in 1:100) {
+    
+    sim100_0[i,] = simulate_lasso(100,0)
+} 
+sim_n_0[8,] = colMedians(sim100_0)
+
+row.names(sim_n_0) <-seq(30,100,10)
+colnames(sim_n_0) <- c("l2_error","pred_error")
+
+sim_n_0.5 = matrix(NA,8,2)
+sim30_0.5 = matrix(NA,100,2)
+for (i in 1:100) {
+  
+  sim30_0.5[i,] = simulate_lasso(30, 0.5)
+} 
+sim_n_0.5[1,] = colMedians(sim30_0.5)
+
+sim40_0.5 = matrix(NA,100,2)
+for (i in 1:100) {
+  
+  sim40_0.5[i,] = simulate_lasso(40, 0.5)
+} 
+sim_n_0.5[2,] = colMedians(sim40_0.5)
+
+sim50_0.5 = matrix(NA,100,2)
+for (i in 1:100) {
+  
+  sim50_0.5[i,] = simulate_lasso(50, 0.5)
+} 
+sim_n_0.5[3,] = colMedians(sim50_0.5)
+
+sim60_0.5 = matrix(NA,100,2)
+for (i in 1:100) {
+  
+  sim60_0.5[i,] = simulate_lasso(60, 0.5)
+} 
+sim_n_0.5[4,] = colMedians(sim60_0.5)
+
+sim70_0.5 = matrix(NA,100,2)
+for (i in 1:100) {
+  
+  sim70_0.5[i,] = simulate_lasso(70, 0.5)
+} 
+sim_n_0.5[5,] = colMedians(sim70_0.5)
+
+sim80_0.5 = matrix(NA,100,2)
+for (i in 1:100) {
+  
+  sim80_0.5[i,] = simulate_lasso(80, 0.5)
+} 
+sim_n_0.5[6,] = colMedians(sim80_0.5)
+
+sim90_0.5 = matrix(NA,100,2)
+for (i in 1:100) {
+  
+  sim90_0.5[i,] = simulate_lasso(90, 0.5)
+} 
+sim_n_0.5[7,] = colMedians(sim90_0.5)
+
+sim100_0.5 = matrix(NA,100,2)
+for (i in 1:100) {
+  
+  sim100_0.5[i,] = simulate_lasso(100, 0.5)
+} 
+sim_n_0.5[8,] = colMedians(sim100_0.5)
+
+row.names(sim_n_0.5) <-seq(30,100,10)
+colnames(sim_n_0.5) <- c("l2_error","pred_error")
+
+sim_n_0.75 = matrix(NA,8,2)
+sim30_0.75 = matrix(NA,100,2)
+for (i in 1:100) {
+  
+  sim30_0.75[i,] = simulate_lasso(30, 0.75)
+} 
+sim_n_0.75[1,] = colMedians(sim30_0.75)
+
+sim40_0.75 = matrix(NA,100,2)
+for (i in 1:100) {
+  
+  sim40_0.75[i,] = simulate_lasso(40, 0.75)
+} 
+sim_n_0.75[2,] = colMedians(sim40_0.75)
+
+sim50_0.75 = matrix(NA,100,2)
+for (i in 1:100) {
+  
+  sim50_0.75[i,] = simulate_lasso(50, 0.75)
+} 
+sim_n_0.75[3,] = colMedians(sim50_0.75)
+
+sim60_0.75 = matrix(NA,100,2)
+for (i in 1:100) {
+  
+  sim60_0.75[i,] = simulate_lasso(60, 0.75)
+} 
+sim_n_0.75[4,] = colMedians(sim60_0.75)
+
+sim70_0.75 = matrix(NA,100,2)
+for (i in 1:100) {
+  
+  sim70_0.75[i,] = simulate_lasso(70, 0.75)
+} 
+sim_n_0.75[5,] = colMedians(sim70_0.75)
+
+sim80_0.75 = matrix(NA,100,2)
+for (i in 1:100) {
+  
+  sim80_0.75[i,] = simulate_lasso(80, 0.75)
+} 
+sim_n_0.75[6,] = colMedians(sim80_0.75)
+
+sim90_0.75 = matrix(NA,100,2)
+for (i in 1:100) {
+  
+  sim90_0.75[i,] = simulate_lasso(90, 0.75)
+} 
+sim_n_0.75[7,] = colMedians(sim90_0.75)
+
+sim100_0.75 = matrix(NA,100,2)
+for (i in 1:100) {
+  
+  sim100_0.75[i,] = simulate_lasso(100, 0.75)
+} 
+sim_n_0.75[8,] = colMedians(sim100_0.75)
+
+row.names(sim_n_0.75) <-seq(30,100,10)
+colnames(sim_n_0.75) <- c("l2_error","pred_error")
+
+sim_n_0.9 = matrix(NA,8,2)
+sim30_0.9 = matrix(NA,100,2)
+for (i in 1:100) {
+  
+  sim30_0.9[i,] = simulate_lasso(30, 0.9)
+} 
+sim_n_0.9[1,] = colMedians(sim30_0.9)
+
+sim40_0.9 = matrix(NA,100,2)
+for (i in 1:100) {
+  
+  sim40_0.9[i,] = simulate_lasso(40, 0.9)
+} 
+sim_n_0.9[2,] = colMedians(sim40_0.9)
+
+sim50_0.9 = matrix(NA,100,2)
+for (i in 1:100) {
+  
+  sim50_0.9[i,] = simulate_lasso(50, 0.9)
+} 
+sim_n_0.9[3,] = colMedians(sim50_0.9)
+
+sim60_0.9 = matrix(NA,100,2)
+for (i in 1:100) {
+  
+  sim60_0.9[i,] = simulate_lasso(60, 0.9)
+} 
+sim_n_0.9[4,] = colMedians(sim60_0.9)
+
+sim70_0.9 = matrix(NA,100,2)
+for (i in 1:100) {
+  
+  sim70_0.9[i,] = simulate_lasso(70, 0.9)
+} 
+sim_n_0.9[5,] = colMedians(sim70_0.9)
+
+sim80_0.9 = matrix(NA,100,2)
+for (i in 1:100) {
+  
+  sim80_0.9[i,] = simulate_lasso(80, 0.9)
+} 
+sim_n_0.9[6,] = colMedians(sim80_0.9)
+
+sim90_0.9 = matrix(NA,100,2)
+for (i in 1:100) {
+  
+  sim90_0.9[i,] = simulate_lasso(90, 0.9)
+} 
+sim_n_0.9[7,] = colMedians(sim90_0.9)
+
+sim100_0.9 = matrix(NA,100,2)
+for (i in 1:100) {
+  
+  sim100_0.9[i,] = simulate_lasso(100, 0.9)
+} 
+sim_n_0.9[8,] = colMedians(sim100_0.9)
+
+row.names(sim_n_0.9) <-seq(30,100,10)
+colnames(sim_n_0.9) <- c("l2_error","pred_error")
+```
+  
+```{r, echo = FALSE}
+color = c("black"="black", "red"="red", "green"="green", "blue"="blue")
+L2_error_plt<- ggplot() +
+  geom_line(aes(x = seq(30,100,10), y = sim_n_0[,1],col = 'black')) +
+  geom_line(aes(x = seq(30,100,10), y = sim_n_0.5[,1]), col = 'red') +
+  geom_line(aes(x = seq(30,100,10), y = sim_n_0.75[,1]), col = 'green') +
+  geom_line(aes(x = seq(30,100,10), y = sim_n_0.9[,1]), col = 'blue') +
+  geom_point(aes(x = seq(30,100,10), y = sim_n_0[,1]), col = 'black') +
+  geom_point(aes(x = seq(30,100,10), y = sim_n_0.5[,1]), col = 'red') +
+  geom_point(aes(x = seq(30,100,10), y = sim_n_0.75[,1]), col = 'green') +
+  geom_point(aes(x = seq(30,100,10), y = sim_n_0.9[,1]), col = 'blue') +
+  xlab('n') +
+  ylab('Median L2 error (over 100 trials)')+
+  labs(title = 'L2 error') +
+  scale_color_manual(name = "cor_within", 
+                     values = color, 
+                     labels = c('Cor: 0', "Cor: 0.5", "Cor: 0.75", "Cor: 0.9")
+                     ) +
+  guides(color = guide_legend("cor_within"))
+
+Pred_error_plt<- ggplot() +
+  geom_line(aes(x = seq(30,100,10), y = sim_n_0[,2],col = 'black')) +
+  geom_line(aes(x = seq(30,100,10), y = sim_n_0.5[,2]), col = 'red') +
+  geom_line(aes(x = seq(30,100,10), y = sim_n_0.75[,2]), col = 'green') +
+  geom_line(aes(x = seq(30,100,10), y = sim_n_0.9[,2]), col = 'blue') +
+  geom_point(aes(x = seq(30,100,10), y = sim_n_0[,2]), col = 'black') +
+  geom_point(aes(x = seq(30,100,10), y = sim_n_0.5[,2]), col = 'red') +
+  geom_point(aes(x = seq(30,100,10), y = sim_n_0.75[,2]), col = 'green') +
+  geom_point(aes(x = seq(30,100,10), y = sim_n_0.9[,2]), col = 'blue') +
+  xlab('n') +
+  ylab('Median prediction error (over 100 trials)')+
+  labs(title = 'Prediction error') +
+  scale_color_manual(name = "cor_within", 
+                     values = color, 
+                     labels = c('Cor: 0', "Cor: 0.5", "Cor: 0.75", "Cor: 0.9")
+                     ) +
+  guides(color = guide_legend("cor_within"))
+
+plot_grid(L2_error_plt, Pred_error_plt)
+
+```
+1. For both plots, error decreases as n increases.  
+2. Median L2 error is higher for large within-group correlation while Median prediction error becomes smaller as with-in group correlation raises.   
+
